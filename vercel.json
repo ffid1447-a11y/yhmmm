@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "functions": {
+    "api/pan_full.py": {
+      "runtime": "python3.9",
+      "maxDuration": 60
+    }
+  },
+  "routes": [
+    {
+      "src": "/pan",
+      "dest": "/api/pan_full.py"
+    }
+  ]
+}
