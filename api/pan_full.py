@@ -10,69 +10,50 @@ GST_INFO_API = "https://gstlookup.hideme.eu.org/?gstNumber="
 
 @app.route("/pan", methods=["GET"])
 def pan_lookup():
-    pan = request.args.get("pan")
+    pan = request.args.get("pan", "").strip()
     if not pan:
         return jsonify({"error": "Missing ?pan="}), 400
 
+    url = f"{RAZORPAY_URL}{pan}/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10) Chrome/142 Mobile Safari",
+        "Accept": "*/*",
+        "Referer": url
+    }
+
     try:
-        # Step 1: Fetch Razorpay PAN page
-        url = f"{RAZORPAY_URL}{pan}/"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Linux; Android 10) Chrome/142 Mobile Safari",
-            "Accept": "*/*",
-            "Referer": url
-        }
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            return jsonify({"error": "Razorpay returned status " + str(r.status_code)}), 400
 
-        razor = requests.get(url, headers=headers)
-        if razor.status_code != 200:
-            return jsonify({"error": "Razorpay blocked or PAN invalid"}), 400
+        soup = BeautifulSoup(r.text, "html.parser")
 
-        soup = BeautifulSoup(razor.text, "html.parser")
+        # Extract candidate 15-char GST-like tokens
+        gst_set = set()
+        for text in soup.stripped_strings:
+            t = text.strip()
+            if len(t) == 15 and t.isalnum():
+                gst_set.add(t.upper())
 
-        # Step 2: Extract GST numbers
-        gst_list = []
-        possible = soup.find_all("div")
-        for div in possible:
-            text = div.get_text(strip=True)
-            if len(text) == 15 and text.isalnum():
-                gst_list.append(text)
+        gst_list = sorted(gst_set)
 
-        gst_list = list(set(gst_list))  # remove duplicates
-
-        # Step 3: Fetch details for each GST number
-        gst_details = []
+        details = []
         for gst in gst_list:
             try:
-                r = requests.get(GST_INFO_API + gst, timeout=10)
-                data = r.json()
-                gst_details.append({
-                    "gst_number": gst,
-                    "info": data
-                })
-            except:
-                gst_details.append({
-                    "gst_number": gst,
-                    "info": "Failed to fetch details"
-                })
+                rr = requests.get(GST_INFO_API + gst, timeout=12)
+                # some endpoints return HTML or JSON; try JSON first
+                data = rr.json() if 'application/json' in rr.headers.get('Content-Type', '') else rr.text
+                details.append({"gst_number": gst, "info": data})
+            except Exception:
+                details.append({"gst_number": gst, "info": "Failed to fetch details"})
 
-        # Final Response
         return jsonify({
             "success": True,
             "pan": pan,
             "total_gst_found": len(gst_list),
             "gst_numbers": gst_list,
-            "details": gst_details
+            "details": details
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-
-# For Vercel (optional)
-def handler(request, response):
-    with app.test_request_context(
-        path=request.path,
-        method=request.method,
-        query_string=request.query_string
-    ):
-        return app.full_dispatch_request()
